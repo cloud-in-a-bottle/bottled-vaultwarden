@@ -1,0 +1,39 @@
+[app]
+name = "vaultwarden"
+version = "0.1.0"
+description = "Vaultwarden (self-hosted Bitwarden-compatible password manager) for OpenHost.  Pattern E: the OpenHost zone_auth gate keeps this private to the owner, but the user logs in to Vaultwarden with their MASTER PASSWORD because vaults are end-to-end encrypted and the master password is never sent to the server.  This is by design — the entire point of using a password manager."
+authors = ["Andrew Laack <andrew@laack.co>"]
+
+[runtime.container]
+image = "Dockerfile"
+# OpenHost-routed port.  The auth-proxy sidecar listens here,
+# strips client-supplied X-OpenHost-* / X-Remote-User headers
+# (defence in depth), and forwards everything to vaultwarden's
+# Rocket server on 127.0.0.1:8088.  /_healthz is synthesised
+# locally as a static 200 OK.
+port = 8080
+
+[routing]
+# /_healthz is served by the auth-proxy; the OpenHost router uses
+# this for its container health probe.
+health_check = "/_healthz"
+# Pattern E — no public sharing.  The whole app surface is gated
+# behind zone_auth.  Owner-only.
+public_paths = ["/_healthz"]
+
+[resources]
+memory_mb = 512
+cpu_millicores = 500
+
+[data]
+# Persistent state under /data/app_data/vaultwarden/:
+#   * db.sqlite3                — vaults, users, attachments metadata.
+#   * attachments/, sends/, ... — file attachments.
+#   * rsa_key.pem, rsa_key.pub  — Vaultwarden's JWT signing key.
+#   * admin_token.txt           — the /admin panel access token,
+#                                 generated on first boot and shown
+#                                 to the operator.  NOT a user
+#                                 credential — it only protects the
+#                                 server-admin diagnostic panel.
+app_data = true
+app_temp_data = false
