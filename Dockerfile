@@ -20,15 +20,15 @@
 # verbatim — including WebSocket upgrades for the Bitwarden
 # notifications channel — to upstream Vaultwarden.
 
-FROM docker.io/vaultwarden/server:testing
+FROM docker.io/vaultwarden/server:1.36.0
 
 # Install python3 (for the auth-proxy sidecar) + tini (PID-1 signal
 # forwarder).  The vaultwarden upstream image is Debian-based.
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends \
-        python3 \
-        tini \
-        ca-certificates \
+        python3=3.11.2-1+b1 \
+        tini=0.19.0-1+b3 \
+        ca-certificates=20230311+deb12u1 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY auth_proxy.py /opt/openhost-vaultwarden/auth_proxy.py
