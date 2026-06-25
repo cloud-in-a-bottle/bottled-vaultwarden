@@ -179,6 +179,13 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
             pass
 
         path_only = self.path.split("?", 1)[0]
+
+        # Bitwarden extension ≥2026.4.x calls this new alias; rewrite to the
+        # canonical endpoint so older Vaultwarden builds don't return 404.
+        if path_only == "/identity/accounts/prelogin/password":
+            self.path = "/identity/accounts/prelogin" + self.path[len(path_only):]
+            path_only = "/identity/accounts/prelogin"
+
         if path_only == "/_healthz":
             try:
                 body = b'{"status":"ok"}'
