@@ -99,6 +99,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("auth_proxy")
 
+STARTUP_ERROR: str = os.environ.get("VAULTWARDEN_STARTUP_ERROR", "").strip()
+if STARTUP_ERROR:
+    log.warning("startup error will be shown to users: %s", STARTUP_ERROR)
+
 
 def _strip_headers(
     headers: Iterable[tuple[str, str]], drop: AbstractSet[str]
@@ -144,6 +148,25 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
         except OSError as exc:
             log.debug("client disconnected before error response: %s", exc)
 
+    def _serve_startup_error(self) -> None:
+        html = (
+            b"<!doctype html>\n"
+            b"<html><head><title>Vaultwarden unavailable</title></head>\n"
+            b"<body><h1>Vaultwarden is unavailable</h1>\n<p>"
+            + STARTUP_ERROR.encode("utf-8", errors="replace")
+            + b"</p>\n</body></html>\n"
+        )
+        try:
+            self.send_response(503)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(html)
+        except OSError as exc:
+            log.debug("client disconnected before startup error page: %s", exc)
+
     def _is_websocket_upgrade(self) -> bool:
         connection = self.headers.get("Connection", "").lower()
         upgrade = self.headers.get("Upgrade", "").lower().strip()
@@ -168,6 +191,10 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
                     self.wfile.write(body)
             except OSError as exc:
                 log.debug("/_healthz client disconnected: %s", exc)
+            return
+
+        if STARTUP_ERROR:
+            self._serve_startup_error()
             return
 
         if self._is_websocket_upgrade():
@@ -303,6 +330,7 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
                     if key.lower() in HOP_BY_HOP_HEADERS:
                         continue
                     self.send_header(key, value)
+                self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 if self.command != "HEAD":
                     self.wfile.write(payload)
@@ -323,6 +351,10 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
 
     def _proxy_websocket(self) -> None:
         cleaned_headers = self._build_upstream_headers()
+        # _build_upstream_headers strips Connection and Upgrade (hop-by-hop),
+        # but RFC 6455 requires both in the upgrade request sent upstream.
+        cleaned_headers.append(("Connection", "Upgrade"))
+        cleaned_headers.append(("Upgrade", "websocket"))
 
         try:
             upstream_sock = socket.create_connection(
