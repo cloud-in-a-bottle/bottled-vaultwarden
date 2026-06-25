@@ -26,9 +26,9 @@ FROM docker.io/vaultwarden/server:1.36.0
 # forwarder).  The vaultwarden upstream image is Debian-based.
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends \
-        python3=3.11.2-1+b1 \
-        tini=0.19.0-1+b3 \
-        ca-certificates=20230311+deb12u1 \
+        python3 \
+        tini \
+        ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 COPY auth_proxy.py /opt/openhost-vaultwarden/auth_proxy.py
