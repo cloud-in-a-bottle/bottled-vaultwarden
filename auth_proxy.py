@@ -180,9 +180,17 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
 
         path_only = self.path.split("?", 1)[0]
 
-        # Bitwarden extension ≥2026.4.x calls this new alias; rewrite to the
-        # canonical endpoint so older Vaultwarden builds don't return 404.
+        # Bitwarden ≥2026.4.x introduced /identity/accounts/prelogin/password.
+        # The web vault calls it as GET (no body — fetching server-default KDF
+        # params before the user types an email); the extension calls it as POST
+        # with {"email": "..."} in the body.  Vaultwarden <1.36.0 has neither;
+        # 1.36.0 adds only the POST form.  Handle both here:
+        #   GET  → translate to POST /identity/accounts/prelogin, empty email
+        #   POST → rewrite path, fall through to normal proxy
         if path_only == "/identity/accounts/prelogin/password":
+            if self.command == "GET":
+                self._proxy_prelogin_compat()
+                return
             self.path = "/identity/accounts/prelogin" + self.path[len(path_only):]
             path_only = "/identity/accounts/prelogin"
 
@@ -343,6 +351,86 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
                     self.wfile.write(payload)
             except OSError as exc:
                 log.debug("client disconnected mid-response: %s", exc)
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------
+    # Prelogin compatibility shim
+    #
+    # Bitwarden web vault ≥2026.4.x sends GET /identity/accounts/prelogin/password
+    # with no body to fetch server-default KDF parameters before the user enters
+    # their email.  Vaultwarden only implements POST /identity/accounts/prelogin
+    # (which returns defaults when given an unknown email).  Translate here.
+    # ------------------------------------------------------------
+
+    def _proxy_prelogin_compat(self) -> None:
+        body = b'{"email":""}'
+        headers = [
+            (k, v) for k, v in self._build_upstream_headers()
+            if k.lower() != "content-type"
+        ]
+        headers.append(("Content-Type", "application/json"))
+
+        try:
+            conn = http.client.HTTPConnection(
+                self.upstream_host, self.upstream_port, timeout=120
+            )
+        except OSError as exc:
+            log.warning("upstream connect error: %s", exc)
+            self._safe_send_error(502, "Bad Gateway")
+            return
+
+        try:
+            try:
+                conn.putrequest(
+                    "POST", "/identity/accounts/prelogin",
+                    skip_host=True, skip_accept_encoding=True,
+                )
+                host_added = False
+                for key, value in headers:
+                    if key.lower() == "host":
+                        conn.putheader(key, value)
+                        host_added = True
+                        break
+                if not host_added:
+                    conn.putheader(
+                        "Host", f"{self.upstream_host}:{self.upstream_port}"
+                    )
+                for key, value in headers:
+                    if key.lower() == "host":
+                        continue
+                    conn.putheader(key, value)
+                conn.putheader("Content-Length", str(len(body)))
+                conn.endheaders(message_body=body)
+                upstream = conn.getresponse()
+            except (OSError, http.client.HTTPException) as exc:
+                log.warning("upstream error: %s", exc)
+                self._safe_send_error(502, "Bad Gateway")
+                return
+
+            try:
+                payload = upstream.read(MAX_BODY_BYTES + 1)
+            except (OSError, http.client.HTTPException) as exc:
+                log.warning("upstream read error: %s", exc)
+                self._safe_send_error(502, "Bad Gateway")
+                return
+            finally:
+                try:
+                    upstream.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            try:
+                self.send_response(upstream.status, upstream.reason or "")
+                for key, value in upstream.getheaders():
+                    if key.lower() in HOP_BY_HOP_HEADERS:
+                        continue
+                    self.send_header(key, value)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except OSError as exc:
+                log.debug("client disconnected: %s", exc)
         finally:
             conn.close()
 
