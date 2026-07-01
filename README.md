@@ -75,10 +75,13 @@ hasn't merged, and a more invasive integration than Pattern E.
    credential and granting it to someone does **not** give vault
    access.
 
-3. **Register your user account.** Visit `https://vaultwarden.<zone>/`
-   in your browser. The OpenHost zone_auth gate admits you (you're
-   the owner). The Vaultwarden web vault loads. Click **Create
-   Account**, enter your email and a strong master password.
+3. **Configure Bitwarden clients.** In the Bitwarden mobile app /
+   browser extension / desktop app, change the **Server URL** to
+   `https://vaultwarden.<your-zone>/`. By default, it shows
+   `Accessing: bitwarden.com`. 
+   
+   Then, proceed with a typical registration, setting a strong
+   master password. 
 
    ⚠ **Your master password is the ONLY way to decrypt your vault.
    Vaultwarden cannot reset or recover it. Write it down somewhere
@@ -89,11 +92,6 @@ hasn't merged, and a more invasive integration than Pattern E.
    easiest way is via `/admin` → General Settings → toggle "Allow
    new signups" off → Save. (Alternatively, redeploy with the env
    override, which the OpenHost manifest supports per-instance.)
-
-5. **Configure Bitwarden clients.** In the Bitwarden mobile app /
-   browser extension / desktop app, go to settings and set the
-   **Server URL** to `https://vaultwarden.<your-zone>/`. Sign in with
-   the same email and master password you used during registration.
 
 ## Useful URLs
 

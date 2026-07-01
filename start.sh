@@ -144,18 +144,29 @@ VW_PID=$!
 # itself) so a slow upstream cold-start doesn't get the container
 # marked failed.
 echo "[start.sh] Waiting for vaultwarden on $ROCKET_ADDRESS:$ROCKET_PORT ..."
+READY=0
 for i in $(seq 1 60); do
+    if ! kill -0 "$VW_PID" 2>/dev/null; then
+        echo "[start.sh] FATAL: vaultwarden exited during startup (probe $i)" >&2
+        export VAULTWARDEN_STARTUP_ERROR="Vaultwarden crashed during startup. The container will restart — check the logs for details."
+        break
+    fi
     if python3 -c "
 import socket, sys
 s = socket.socket()
 s.settimeout(0.5)
 sys.exit(0 if s.connect_ex(('127.0.0.1', $ROCKET_PORT)) == 0 else 1)
 " 2>/dev/null; then
+        READY=1
         echo "[start.sh] vaultwarden is up after ${i} probe(s)"
         break
     fi
     sleep 1
 done
+if [[ $READY -eq 0 && -z "${VAULTWARDEN_STARTUP_ERROR:-}" ]]; then
+    echo "[start.sh] WARNING: vaultwarden did not respond on :$ROCKET_PORT after 60 probes" >&2
+    export VAULTWARDEN_STARTUP_ERROR="Vaultwarden is taking longer than expected to start. Try refreshing in a moment."
+fi
 
 # ----------------------------------------------------------------------
 # Launch auth-proxy

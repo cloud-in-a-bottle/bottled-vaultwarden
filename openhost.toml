@@ -17,9 +17,21 @@ port = 8080
 # /_healthz is served by the auth-proxy; the OpenHost router uses
 # this for its container health probe.
 health_check = "/_healthz"
-# Pattern E — no public sharing.  The whole app surface is gated
-# behind zone_auth.  Owner-only.
-public_paths = ["/_healthz"]
+# The Bitwarden API paths must be public so native clients (browser
+# extension, mobile app, desktop) can reach them.  Those clients carry
+# Bitwarden auth tokens, not OpenHost session cookies, so zone_auth
+# cannot gate them — their POST requests would be redirected by
+# zone_auth and the client would follow as GET, breaking the login
+# flow.  Vault data is safe regardless: it is end-to-end encrypted
+# and Bitwarden enforces its own authentication on every API call.
+# The web vault UI at / remains zone_auth-gated (owner-only).
+public_paths = [
+    "/_healthz",
+    "/api/",
+    "/identity/",
+    "/notifications/",
+    "/icons/",
+]
 
 [resources]
 memory_mb = 512
