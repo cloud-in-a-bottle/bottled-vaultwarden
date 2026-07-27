@@ -118,6 +118,17 @@ The auth-proxy:
   generation matches the public hostname.
 - Forces `X-Forwarded-Proto: https` upstream so Vaultwarden knows the
   public scheme is HTTPS.
+- Sets `X-Real-IP` (Vaultwarden's default `IP_HEADER`) to the real
+  client IP, derived from the **trusted** `X-Forwarded-For` that the
+  OpenHost compute space sets, and **drops any client-supplied**
+  `X-Real-IP`. This matters for security: Vaultwarden rate-limits login
+  attempts per client IP on the public `/identity/` endpoint. Without
+  this, Vaultwarden would either see every client as `127.0.0.1` (so one
+  user's failed logins could trip the global limiter and lock everyone
+  out) or — worse — honour a client-spoofable `X-Real-IP`, letting an
+  attacker rotate the header to bypass brute-force rate limiting
+  entirely. Deriving it from the unspoofable `X-Forwarded-For` fixes
+  both.
 - Tunnels WebSocket upgrades for `/notifications/hub` (Bitwarden's push
   channel for "new item added on another device" prompts).
 - Serves `/_healthz` locally as a static 200 so cold-start doesn't get
