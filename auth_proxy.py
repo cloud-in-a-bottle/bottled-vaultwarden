@@ -59,6 +59,33 @@ OWNER_HEADER_NAME = "X-OpenHost-Is-Owner"
 USER_HEADER_NAME = "X-OpenHost-User"
 REMOTE_USER_HEADER_NAME = "X-Remote-User"
 
+# The OpenHost compute space strips any client-supplied X-Forwarded-For and
+# re-adds it with the real client IP (Caddy records it on the trusted loopback
+# hop; see compute_space/web/middleware/subdomain_proxy.py::_resolve_forwarded_for
+# and helpers/proxy.py's _HTTP_REQUEST_EXCLUDED_HEADERS).  So X-Forwarded-For is
+# TRUSTWORTHY here.
+#
+# Vaultwarden, however, reads the client IP from IP_HEADER, which defaults to
+# ``X-Real-IP`` — a header the OpenHost layer does NOT set or sanitize.  That has
+# two consequences we must fix in this proxy:
+#
+#   1. Spoofing / rate-limit bypass: because the OpenHost layer passes a
+#      client-supplied X-Real-IP through untouched, a malicious client could set
+#      a fresh X-Real-IP on every request and completely bypass Vaultwarden's
+#      per-IP login brute-force rate limiting (the /identity/ login endpoint is a
+#      public path, reachable without owner auth).
+#   2. Wrong IP: with no X-Real-IP set, Vaultwarden falls back to the loopback
+#      peer address (127.0.0.1), so ALL clients share one bucket — one user's
+#      failed logins can trip the global limiter and lock everyone out — and
+#      audit logs / new-device emails show 127.0.0.1 instead of the real IP.
+#
+# Fix: always DROP any inbound X-Real-IP, then set X-Real-IP ourselves to the
+# real client IP taken from the trusted X-Forwarded-For (its first, left-most
+# hop).  This makes Vaultwarden's default IP_HEADER see the genuine,
+# unspoofable client IP.
+REAL_IP_HEADER_NAME = "X-Real-IP"
+FORWARDED_FOR_HEADER_NAME = "X-Forwarded-For"
+
 HOP_BY_HOP_HEADERS = frozenset(
     h.lower()
     for h in (
@@ -82,8 +109,24 @@ ALWAYS_STRIP_HEADERS = frozenset(
         USER_HEADER_NAME,
         REMOTE_USER_HEADER_NAME,
         "Remote-User",
+        # Drop any client-supplied X-Real-IP; we re-derive it from the trusted
+        # X-Forwarded-For below so it cannot be spoofed to evade rate limiting.
+        REAL_IP_HEADER_NAME,
     )
 )
+
+
+def _client_ip_from_forwarded_for(forwarded_for: str) -> str:
+    """Extract the real client IP from a trusted X-Forwarded-For value.
+
+    X-Forwarded-For is a comma-separated chain ``client, proxy1, proxy2``; the
+    left-most entry is the originating client.  The OpenHost compute space sets
+    this to the real client IP on the trusted loopback hop, so the first entry
+    is authoritative and already a bare IP (no port).  Returns the stripped
+    left-most token; may be an empty string if the input is empty or blank, in
+    which case the caller skips setting X-Real-IP.
+    """
+    return forwarded_for.split(",", 1)[0].strip()
 
 CLIENT_READ_TIMEOUT_SECONDS = 300
 WEBSOCKET_IDLE_TIMEOUT_SECONDS = 600
@@ -237,6 +280,19 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
             if k.lower() != "x-forwarded-proto"
         ]
         cleaned_headers.append(("X-Forwarded-Proto", "https"))
+        # Set X-Real-IP (Vaultwarden's default IP_HEADER) to the real client IP
+        # taken from the TRUSTED X-Forwarded-For that the OpenHost compute space
+        # set.  Any client-supplied X-Real-IP was already dropped via
+        # ALWAYS_STRIP_HEADERS, so this value cannot be spoofed.  Without this,
+        # Vaultwarden sees 127.0.0.1 for every request (global login rate-limit
+        # bucket + useless audit logs); with a spoofable X-Real-IP it could be
+        # rotated to bypass rate limiting entirely.  We keep the original
+        # X-Forwarded-For intact for any tooling that prefers it.
+        forwarded_for = self.headers.get(FORWARDED_FOR_HEADER_NAME, "").strip()
+        if forwarded_for:
+            client_ip = _client_ip_from_forwarded_for(forwarded_for)
+            if client_ip:
+                cleaned_headers.append((REAL_IP_HEADER_NAME, client_ip))
         return cleaned_headers
 
     def _proxy(self) -> None:
@@ -339,13 +395,26 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
                 return
 
             reason = upstream.reason or ""
+            # For a HEAD request, http.client yields an empty body even though
+            # the resource has a real size, so len(payload) is 0.  RFC 7231 §4.3.2
+            # requires HEAD to return the same Content-Length a GET would.  Echo
+            # the upstream's declared Content-Length for HEAD; for every other
+            # method the body is buffered, so the byte length of what we send is
+            # authoritative.
+            if self.command == "HEAD":
+                upstream_cl = upstream.getheader("Content-Length")
+                content_length = (
+                    upstream_cl if upstream_cl is not None else str(len(payload))
+                )
+            else:
+                content_length = str(len(payload))
             try:
                 self.send_response(upstream.status, reason)
                 for key, value in upstream.getheaders():
                     if key.lower() in HOP_BY_HOP_HEADERS:
                         continue
                     self.send_header(key, value)
-                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Content-Length", content_length)
                 self.end_headers()
                 if self.command != "HEAD":
                     self.wfile.write(payload)
@@ -514,14 +583,24 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
         client_sock.settimeout(None)
         upstream_sock.settimeout(None)
         sockets = [client_sock, upstream_sock]
+        # Enforce an idle ceiling so a dead/half-open peer (e.g. a mobile client
+        # whose connection dropped without a TCP FIN) doesn't leak this bridge
+        # thread + two sockets forever.  A live Bitwarden client sends SignalR
+        # keepalive pings well within this window, so each ping resets the idle
+        # timer and only genuinely-idle connections are reaped.
         try:
             while True:
                 readable, _, errored = select.select(
                     sockets, [], sockets, WEBSOCKET_IDLE_TIMEOUT_SECONDS
                 )
                 if not readable and not errored:
-                    # idle timeout; keep going (Bitwarden sends pings).
-                    continue
+                    # No traffic in either direction for the whole idle window:
+                    # treat the connection as dead and tear the bridge down.
+                    log.debug(
+                        "websocket bridge idle for %ss; closing",
+                        WEBSOCKET_IDLE_TIMEOUT_SECONDS,
+                    )
+                    return
                 if errored:
                     return
                 for src in readable:
