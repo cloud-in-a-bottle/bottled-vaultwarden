@@ -1,17 +1,17 @@
-# openhost-vaultwarden
+# bottled-vaultwarden
 
 [Vaultwarden](https://github.com/dani-garcia/vaultwarden) — a self-hosted
-Bitwarden-compatible password manager — packaged for OpenHost.
+Bitwarden-compatible password manager — packaged for Cloud in a Bottle.
 
 ## What this gives you
 
 - A Vaultwarden server reachable at `https://vaultwarden.<your-zone>/`.
-- The OpenHost zone_auth gate keeps the subdomain private to the owner —
-  anonymous visitors are bounced to OpenHost's `/login` and never reach
+- The Cloud in a Bottle zone_auth gate keeps the subdomain private to the owner —
+  anonymous visitors are bounced to Cloud in a Bottle's `/login` and never reach
   the Vaultwarden web vault.
 - Persistent state (database, attachments, RSA signing key, admin token)
   under `$OPENHOST_APP_DATA_DIR` (`/data/app_data/vaultwarden/`), so the
-  vault survives container rebuilds and OpenHost upgrades.
+  vault survives container rebuilds and Cloud in a Bottle upgrades.
 - A pre-generated `/admin` panel token printed to the container logs
   on first boot.
 
@@ -32,10 +32,10 @@ user's vault items would still be ciphertext until the master password
 unlocked them client-side. The session would be authenticated but
 useless.
 
-So this OpenHost package uses **Pattern E** from the
+So this Cloud in a Bottle package uses **Pattern E** from the
 [openhost-app skill](https://opencode.ai/docs):
 
-- **Owner gating** is handled entirely by the OpenHost router. Anonymous
+- **Owner gating** is handled entirely by the Cloud in a Bottle router. Anonymous
   visitors hit zone_auth and bounce to `/login` on the parent zone before
   they even reach this app.
 - **Authentication into Vaultwarden** is the user's normal master-password
@@ -91,7 +91,7 @@ hasn't merged, and a more invasive integration than Pattern E.
    accounts to) have registered, set `SIGNUPS_ALLOWED=false`. The
    easiest way is via `/admin` → General Settings → toggle "Allow
    new signups" off → Save. (Alternatively, redeploy with the env
-   override, which the OpenHost manifest supports per-instance.)
+   override, which the Cloud in a Bottle manifest supports per-instance.)
 
 ## Useful URLs
 
@@ -100,7 +100,7 @@ hasn't merged, and a more invasive integration than Pattern E.
 | `/` | Web vault (login form) |
 | `/admin` | Server-admin diagnostic panel (admin-token gated) |
 | `/api/version` | Plain-text Vaultwarden version (for verification) |
-| `/_healthz` | Auth-proxy local health endpoint (used by the OpenHost router) |
+| `/_healthz` | Auth-proxy local health endpoint (used by the Cloud in a Bottle router) |
 
 ## Container topology
 
@@ -112,7 +112,7 @@ browser → https://vaultwarden.<zone>/  (zone_auth gate)
 
 The auth-proxy:
 - Strips inbound `X-OpenHost-Is-Owner`, `X-OpenHost-User`, `X-Remote-User`
-  headers as defence-in-depth (the OpenHost router strips them too,
+  headers as defence-in-depth (the Cloud in a Bottle router strips them too,
   but cheap insurance).
 - Rewrites `Host:` from `X-Forwarded-Host` so Vaultwarden's URL
   generation matches the public hostname.
@@ -120,7 +120,7 @@ The auth-proxy:
   public scheme is HTTPS.
 - Sets `X-Real-IP` (Vaultwarden's default `IP_HEADER`) to the real
   client IP, derived from the **trusted** `X-Forwarded-For` that the
-  OpenHost compute space sets, and **drops any client-supplied**
+  Cloud in a Bottle compute space sets, and **drops any client-supplied**
   `X-Real-IP`. This matters for security: Vaultwarden rate-limits login
   attempts per client IP on the public `/identity/` endpoint. Without
   this, Vaultwarden would either see every client as `127.0.0.1` (so one
@@ -160,7 +160,7 @@ could, it only grants access to `/admin`, never to vault data.
 
 ```
 oh app deploy --wait --name vaultwarden \
-  https://github.com/imbue-openhost/openhost-vaultwarden
+  https://github.com/imbue-openhost/bottled-vaultwarden
 ```
 
 Reload after a code change:
