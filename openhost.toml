@@ -1,7 +1,7 @@
 [app]
 name = "vaultwarden"
 version = "0.1.0"
-description = "Vaultwarden (self-hosted Bitwarden-compatible password manager) for OpenHost.  Pattern E: the OpenHost zone_auth gate keeps this private to the owner, but the user logs in to Vaultwarden with their MASTER PASSWORD because vaults are end-to-end encrypted and the master password is never sent to the server.  This is by design — the entire point of using a password manager."
+description = "Vaultwarden (self-hosted Bitwarden-compatible password manager) for Cloud in a Bottle.  Pattern E: the Cloud in a Bottle zone_auth gate keeps this private to the owner, but the user logs in to Vaultwarden with their MASTER PASSWORD because vaults are end-to-end encrypted and the master password is never sent to the server.  This is by design — the entire point of using a password manager."
 authors = ["Andrew Laack <andrew@laack.co>"]
 
 [runtime.container]
