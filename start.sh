@@ -77,7 +77,19 @@ export DOMAIN="${DOMAIN:-https://${PUBLIC_HOSTNAME}}"
 export DATA_FOLDER="${DATA_FOLDER:-$PERSIST}"
 export SIGNUPS_ALLOWED="${SIGNUPS_ALLOWED:-true}"
 export WEB_VAULT_ENABLED="${WEB_VAULT_ENABLED:-true}"
-export ADMIN_TOKEN="${ADMIN_TOKEN:-$ADMIN_TOKEN_VALUE}"
+# Vaultwarden warns (and rightly so) when ADMIN_TOKEN is a plain-text
+# string, since it's then compared in the clear. Store an Argon2id PHC
+# hash instead: the operator still logs in with the plaintext token from
+# admin_token.txt (printed above), but the value in the environment /
+# process table is only a hash. Recomputed each boot with a fresh salt;
+# the plaintext token stays the stable operator credential. An explicit
+# ADMIN_TOKEN override (env) is honoured as-is. Argon2 params follow
+# Vaultwarden's docs.
+if [[ -z "${ADMIN_TOKEN:-}" ]]; then
+    ADMIN_TOKEN_SALT="$(head -c 32 /dev/urandom | base64)"
+    export ADMIN_TOKEN="$(printf '%s' "$ADMIN_TOKEN_VALUE" \
+        | argon2 "$ADMIN_TOKEN_SALT" -e -id -k 65540 -t 3 -p 4)"
+fi
 # Bind Vaultwarden's Rocket server to loopback so only the auth-proxy
 # can reach it.  (Vaultwarden's docker default is 0.0.0.0:80; we keep
 # 0.0.0.0 because the container's network namespace is private to

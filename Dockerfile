@@ -29,6 +29,7 @@ RUN apt-get update -qq \
         python3 \
         tini \
         ca-certificates \
+        argon2 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY auth_proxy.py /opt/openhost-vaultwarden/auth_proxy.py
