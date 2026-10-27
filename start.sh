@@ -73,9 +73,9 @@ echo "[start.sh] -----------------------------------------------------"
 # This is documented in README.md.
 # ----------------------------------------------------------------------
 
-export DOMAIN="${DOMAIN:-https://${PUBLIC_HOSTNAME}}"
-export DATA_FOLDER="${DATA_FOLDER:-$PERSIST}"
-export SIGNUPS_ALLOWED="${SIGNUPS_ALLOWED:-true}"
+export DOMAIN="https://vaultwarden.example.com"  # TEMP
+export DATA_FOLDER="/data"  # TEMP
+export SIGNUPS_ALLOWED=false  # TEMP
 export WEB_VAULT_ENABLED="${WEB_VAULT_ENABLED:-true}"
 # Vaultwarden warns (and rightly so) when ADMIN_TOKEN is a plain-text
 # string, since it's then compared in the clear. Store an Argon2id PHC
@@ -85,7 +85,7 @@ export WEB_VAULT_ENABLED="${WEB_VAULT_ENABLED:-true}"
 # the plaintext token stays the stable operator credential. An explicit
 # ADMIN_TOKEN override (env) is honoured as-is. Argon2 params follow
 # Vaultwarden's docs.
-if [[ -z "${ADMIN_TOKEN:-}" ]]; then
+if false; then  # TEMP: no admin token
     ADMIN_TOKEN_SALT="$(head -c 32 /dev/urandom | base64)"
     export ADMIN_TOKEN="$(printf '%s' "$ADMIN_TOKEN_VALUE" \
         | argon2 "$ADMIN_TOKEN_SALT" -e -id -k 65540 -t 3 -p 4)"
