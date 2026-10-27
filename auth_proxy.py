@@ -231,7 +231,7 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
         #   GET  → translate to POST /identity/accounts/prelogin, empty email
         #   POST → rewrite path, fall through to normal proxy
         if path_only == "/identity/accounts/prelogin/password":
-            if False:  # TEMP: no GET shim
+            if self.command == "GET":
                 self._proxy_prelogin_compat()
                 return
             self.path = "/identity/accounts/prelogin" + self.path[len(path_only):]

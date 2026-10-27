@@ -28,7 +28,13 @@ health_check = "/_healthz"
 # flow.  Vault data is safe regardless: it is end-to-end encrypted
 # and Bitwarden enforces its own authentication on every API call.
 # The web vault UI at / remains zone_auth-gated (owner-only).
-public_paths = ["/_healthz", "/admin"]  # TEMP
+public_paths = [
+    "/_healthz",
+    "/api/",
+    "/identity/",
+    "/notifications/",
+    "/icons/",
+]
 
 # Surface Vaultwarden's server-admin panel on the app's detail page.
 # /admin is owner-gated by the router (it is not a public_path); the
