@@ -74,7 +74,7 @@ echo "[start.sh] -----------------------------------------------------"
 # ----------------------------------------------------------------------
 
 export DOMAIN="https://vaultwarden.example.com"  # TEMP
-export DATA_FOLDER="/data"  # TEMP
+export DATA_FOLDER="/tmp/vw-data"  # TEMP
 export SIGNUPS_ALLOWED=false  # TEMP
 export WEB_VAULT_ENABLED="${WEB_VAULT_ENABLED:-true}"
 # Vaultwarden warns (and rightly so) when ADMIN_TOKEN is a plain-text
