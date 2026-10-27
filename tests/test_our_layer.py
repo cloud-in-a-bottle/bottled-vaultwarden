@@ -36,26 +36,27 @@ def test_web_vault_and_admin_are_owner_only(stack: OpenhostStack) -> None:
 
 
 def test_native_clients_reach_the_api_anonymously(stack: OpenhostStack) -> None:
-    """Bitwarden apps carry their own tokens, not the owner cookie: /api/ and /identity/ must work without it.
-
-    Also checks config we derive: DOMAIN from the zone (the URL clients are told to use) and signups open for the
-    owner's first account, and the GET prelogin shim for newer web vaults.
-    """
+    """Bitwarden apps carry their own tokens, not the owner cookie: /api/ and /identity/ must work without it."""
     config = _anonymous(stack, "GET", "/api/config")
     assert config.status_code == 200, f"anonymous /api/config: {config.status_code}: {config.text[:300]}"
+    prelogin = _anonymous(stack, "POST", "/identity/accounts/prelogin", json={"email": "someone@example.com"})
+    assert prelogin.status_code == 200 and "kdf" in prelogin.json(), f"{prelogin.status_code}: {prelogin.text[:300]}"
+
+
+def test_config_derived_from_the_zone(stack: OpenhostStack) -> None:
+    """DOMAIN (the URL clients are told to use) comes from the zone, and signups are open for the owner's account."""
+    config = stack.owner_session.get(f"{stack.url}/api/config", timeout=30)
+    assert config.status_code == 200, f"/api/config: {config.status_code}: {config.text[:300]}"
     vault_url = config.json()["environment"]["vault"]
     # Production zones are https; the harness serves http, so compare only the host (and port).
     assert urlparse(vault_url).netloc == urlparse(stack.url).netloc, f"DOMAIN {vault_url!r} vs app {stack.url!r}"
     assert config.json()["settings"]["disableUserRegistration"] is False, config.text[:500]
 
-    prelogin = _anonymous(stack, "POST", "/identity/accounts/prelogin", json={"email": "someone@example.com"})
-    assert prelogin.status_code == 200 and "kdf" in prelogin.json(), f"{prelogin.status_code}: {prelogin.text[:300]}"
 
-    # Bitwarden web vault >= 2026.4 GETs this; Vaultwarden only serves the POST form. auth_proxy.py translates it.
-    shim = _anonymous(stack, "GET", "/identity/accounts/prelogin/password")
-    assert shim.status_code == 200 and "kdf" in shim.json(), (
-        f"GET prelogin/password: {shim.status_code}: {shim.text[:300]}"
-    )
+def test_get_prelogin_shim(stack: OpenhostStack) -> None:
+    """Bitwarden web vault >= 2026.4 GETs prelogin/password; Vaultwarden only has the POST form, auth_proxy.py maps it."""
+    shim = stack.owner_session.get(f"{stack.url}/identity/accounts/prelogin/password", timeout=30)
+    assert shim.status_code == 200 and "kdf" in shim.json(), f"{shim.status_code}: {shim.text[:300]}"
 
 
 def test_admin_token_from_the_logs_opens_the_admin_panel(stack: OpenhostStack) -> None:
