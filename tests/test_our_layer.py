@@ -1,4 +1,7 @@
+import hashlib
+import hmac
 import re
+import subprocess
 import time
 from urllib.parse import urlparse
 
@@ -53,10 +56,44 @@ def test_config_derived_from_the_zone(stack: OpenhostStack) -> None:
     assert config.json()["settings"]["disableUserRegistration"] is False, config.text[:500]
 
 
-def test_get_prelogin_shim(stack: OpenhostStack) -> None:
-    """Bitwarden web vault >= 2026.4 GETs prelogin/password; Vaultwarden only has the POST form, auth_proxy.py maps it."""
+# Vaultwarden's KDF for new accounts (User::CLIENT_KDF_TYPE_DEFAULT / CLIENT_KDF_ITER_DEFAULT): PBKDF2-SHA256, 600000.
+DEFAULT_KDF = {"kdf": 0, "kdfIterations": 600_000, "kdfMemory": None, "kdfParallelism": None}
+WEAK_FAKE_KDF_INDEX = 3  # PBKDF2 5000 in unknown_email_kdf's list (src/api/core/accounts.rs, 1.37.x)
+
+
+def _fake_kdf_index(rsa_key_pem: bytes, email: str) -> int:
+    """Which of unknown_email_kdf's six settings Vaultwarden gives `email` (src/auth.rs prelogin_kdf_index)."""
+    key = hmac.new(rsa_key_pem, b"prelogin-kdf", hashlib.sha256).digest()
+    tag = hmac.new(key, email.encode(), hashlib.sha256).digest()
+    return int.from_bytes(tag[:2], "big") % 6
+
+
+def test_get_prelogin_shim_returns_the_default_kdf(stack: OpenhostStack) -> None:
+    """auth_proxy.py answers GET prelogin/password with Vaultwarden's default KDF, never a per-instance fake one.
+
+    Vaultwarden >= 1.37 answers prelogin for an unknown email with one of six KDF settings picked by an HMAC keyed
+    from rsa_key.pem, one of them PBKDF2 at 5000 iterations. To exercise that case on every run, pad the key file
+    (OpenSSL ignores trailing newlines) until the empty email maps to it, restart, and check upstream agrees.
+    """
+    key_file = stack.data_dir / "rsa_key.pem"
+    pem = key_file.read_bytes().rstrip(b"\n") + b"\n"
+    while _fake_kdf_index(pem, "") != WEAK_FAKE_KDF_INDEX:
+        pem += b"\n"
+    key_file.write_bytes(pem)
+    subprocess.run(["podman", "restart", stack.container_name], check=True, capture_output=True, timeout=120)
+
+    upstream = _anonymous(stack, "POST", "/identity/accounts/prelogin", json={"email": ""})
+    assert upstream.status_code == 200, f"{upstream.status_code}: {upstream.text[:300]}"
+    assert (upstream.json()["kdf"], upstream.json()["kdfIterations"]) == (0, 5000), (
+        f"seeding the weak fake KDF didn't take; did upstream change unknown_email_kdf? {upstream.text[:300]}"
+    )
+
     shim = stack.owner_session.get(f"{stack.url}/identity/accounts/prelogin/password", timeout=30)
-    assert shim.status_code == 200 and "kdf" in shim.json(), f"{shim.status_code}: {shim.text[:300]}"
+    assert shim.status_code == 200, f"{shim.status_code}: {shim.text[:300]}"
+    body = shim.json()
+    assert {k: body.get(k) for k in DEFAULT_KDF} == DEFAULT_KDF, f"GET prelogin/password: {shim.text[:300]}"
+    settings = body.get("kdfSettings") or {}
+    assert (settings.get("kdfType"), settings.get("iterations")) == (0, 600_000), f"kdfSettings: {shim.text[:300]}"
 
 
 def test_admin_token_from_the_logs_opens_the_admin_panel(stack: OpenhostStack) -> None:
