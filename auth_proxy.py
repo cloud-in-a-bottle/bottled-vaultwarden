@@ -46,6 +46,7 @@ handled separately via raw socket bridging.
 from __future__ import annotations
 
 import http.client
+import json
 import logging
 import os
 import select
@@ -136,6 +137,20 @@ WEBSOCKET_IDLE_TIMEOUT_SECONDS = 600
 # 10 MiB, but admins can raise it; 200 MiB is a comfortable ceiling.
 MAX_BODY_BYTES = 200 * 1024 * 1024
 
+# Vaultwarden's default client KDF for new accounts, in its prelogin shape
+# (src/api/core/accounts.rs prelogin; src/db/models/user.rs defaults).
+DEFAULT_PRELOGIN_BODY = json.dumps(
+    {
+        "kdf": 0,
+        "kdfIterations": 600_000,
+        "kdfMemory": None,
+        "kdfParallelism": None,
+        "kdfSettings": {"iterations": 600_000, "kdfType": 0, "memory": None, "parallelism": None},
+        "salt": None,
+    },
+    separators=(",", ":"),
+).encode()
+
 logging.basicConfig(
     level=os.environ.get("AUTH_PROXY_LOG_LEVEL", "INFO"),
     format="[auth-proxy] %(asctime)s %(levelname)s %(message)s",
@@ -224,15 +239,16 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
         path_only = self.path.split("?", 1)[0]
 
         # Bitwarden ≥2026.4.x introduced /identity/accounts/prelogin/password.
-        # The web vault calls it as GET (no body — fetching server-default KDF
-        # params before the user types an email); the extension calls it as POST
-        # with {"email": "..."} in the body.  Vaultwarden <1.36.0 has neither;
-        # 1.36.0 adds only the POST form.  Handle both here:
-        #   GET  → translate to POST /identity/accounts/prelogin, empty email
+        # Clients POST it with {"email": "..."} at login (web vault 2026.4 to
+        # 2026.10 and Bitwarden's own server only define POST); no client we
+        # know of sends the GET form, which is kept as a compatibility shim.  Vaultwarden
+        # <1.36.0 has neither; 1.36.0 adds only the POST form.  Handle both:
+        #   GET  → answer locally with Vaultwarden's default KDF (see
+        #          _serve_prelogin_defaults)
         #   POST → rewrite path, fall through to normal proxy
         if path_only == "/identity/accounts/prelogin/password":
             if self.command == "GET":
-                self._proxy_prelogin_compat()
+                self._serve_prelogin_defaults()
                 return
             self.path = "/identity/accounts/prelogin" + self.path[len(path_only):]
             path_only = "/identity/accounts/prelogin"
@@ -426,82 +442,28 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------
     # Prelogin compatibility shim
     #
-    # Bitwarden web vault ≥2026.4.x sends GET /identity/accounts/prelogin/password
-    # with no body to fetch server-default KDF parameters before the user enters
-    # their email.  Vaultwarden only implements POST /identity/accounts/prelogin
-    # (which returns defaults when given an unknown email).  Translate here.
+    # GET /identity/accounts/prelogin/password (no body, so no email) is
+    # answered here with Vaultwarden's default KDF for new accounts:
+    # PBKDF2-SHA256 at 600000 iterations (User::CLIENT_KDF_TYPE_DEFAULT /
+    # CLIENT_KDF_ITER_DEFAULT, constants, not configurable).  It used to be
+    # forwarded as a prelogin with an empty email, but since 1.37 an
+    # unknown email gets one of six per-instance fake KDF settings
+    # (anti-enumeration), one of them PBKDF2 at 5000 iterations.  With no
+    # email there is no user to look up, so the default is the only
+    # meaningful answer.  POST (with an email) still goes to Vaultwarden.
     # ------------------------------------------------------------
 
-    def _proxy_prelogin_compat(self) -> None:
-        body = b'{"email":""}'
-        headers = [
-            (k, v) for k, v in self._build_upstream_headers()
-            if k.lower() != "content-type"
-        ]
-        headers.append(("Content-Type", "application/json"))
-
+    def _serve_prelogin_defaults(self) -> None:
+        body = DEFAULT_PRELOGIN_BODY
         try:
-            conn = http.client.HTTPConnection(
-                self.upstream_host, self.upstream_port, timeout=120
-            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
         except OSError as exc:
-            log.warning("upstream connect error: %s", exc)
-            self._safe_send_error(502, "Bad Gateway")
-            return
-
-        try:
-            try:
-                conn.putrequest(
-                    "POST", "/identity/accounts/prelogin",
-                    skip_host=True, skip_accept_encoding=True,
-                )
-                host_added = False
-                for key, value in headers:
-                    if key.lower() == "host":
-                        conn.putheader(key, value)
-                        host_added = True
-                        break
-                if not host_added:
-                    conn.putheader(
-                        "Host", f"{self.upstream_host}:{self.upstream_port}"
-                    )
-                for key, value in headers:
-                    if key.lower() == "host":
-                        continue
-                    conn.putheader(key, value)
-                conn.putheader("Content-Length", str(len(body)))
-                conn.endheaders(message_body=body)
-                upstream = conn.getresponse()
-            except (OSError, http.client.HTTPException) as exc:
-                log.warning("upstream error: %s", exc)
-                self._safe_send_error(502, "Bad Gateway")
-                return
-
-            try:
-                payload = upstream.read(MAX_BODY_BYTES + 1)
-            except (OSError, http.client.HTTPException) as exc:
-                log.warning("upstream read error: %s", exc)
-                self._safe_send_error(502, "Bad Gateway")
-                return
-            finally:
-                try:
-                    upstream.close()
-                except Exception:  # noqa: BLE001
-                    pass
-
-            try:
-                self.send_response(upstream.status, upstream.reason or "")
-                for key, value in upstream.getheaders():
-                    if key.lower() in HOP_BY_HOP_HEADERS:
-                        continue
-                    self.send_header(key, value)
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-            except OSError as exc:
-                log.debug("client disconnected: %s", exc)
-        finally:
-            conn.close()
+            log.debug("client disconnected: %s", exc)
 
     # ------------------------------------------------------------
     # WebSocket tunneling
