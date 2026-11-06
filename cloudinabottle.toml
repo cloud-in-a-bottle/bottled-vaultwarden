@@ -1,6 +1,6 @@
 [app]
 name = "vaultwarden"
-version = "0.1.0"
+version = "1.0.0"
 description = """
 Vaultwarden (self-hosted Bitwarden-compatible password manager) for Cloud in a Bottle.
 
@@ -9,6 +9,9 @@ authors = ["Andrew Laack <andrew@laack.co>"]
 
 [runtime.container]
 image = "Dockerfile"
+# Cloud in a Bottle pulls this signed prebuilt image (built from the release tag's commit by CI) instead of building
+# `image`. If you fork this app and change it, comment this line out so your instance builds `image` instead.
+prebuilt_image = "registry.cloudinabottle.org/bottled-vaultwarden"
 # OpenHost-routed port.  The auth-proxy sidecar listens here,
 # strips client-supplied X-OpenHost-* / X-Remote-User headers
 # (defence in depth), and forwards everything to vaultwarden's
