@@ -20,7 +20,7 @@
 # verbatim — including WebSocket upgrades for the Bitwarden
 # notifications channel — to upstream Vaultwarden.
 
-FROM docker.io/vaultwarden/server:1.37.4@sha256:efb3cde962015fcc036b2ea625242248611943b27212ebf4392841fb30fad055
+FROM docker.io/vaultwarden/server:1.37.5@sha256:4fe17f415f90087377d37c755e0ea3cf189dcc6794e49cdd2a9adbb4937d9e1f
 
 # Install python3 (for the auth-proxy sidecar) + tini (PID-1 signal
 # forwarder).  The vaultwarden upstream image is Debian-based.
